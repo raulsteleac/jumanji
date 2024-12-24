@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Tuple
+from typing import Tuple, List
 
 import chex
 import jax
@@ -35,7 +35,7 @@ class RandomGenerator:
         num_agents: int,
         num_food: int,
         fov: int,
-        max_agent_level: int = 2,
+        agent_food_level_pairs: List[Tuple[int, int]],
         force_coop: bool = False,
     ):
         """
@@ -53,7 +53,6 @@ class RandomGenerator:
         assert 1 <= fov <= grid_size, "Field of view must be between 1 and grid_size."
         assert num_agents > 0, "Number of agents must be positive."
         assert num_food > 0, "Number of food items must be positive."
-        assert max_agent_level >= 2, "Maximum agent level must be at least 2."
 
         # First assert:
         min_cells_food = num_food * 5
@@ -67,7 +66,9 @@ class RandomGenerator:
         self.fov = grid_size if fov is None else fov
         self.num_agents = num_agents
         self.num_food = num_food
-        self.max_agent_level = max_agent_level
+        self.agent_food_level_pairs = jnp.array(agent_food_level_pairs)
+        self.max_agent_level = max([pair[0] for pair in agent_food_level_pairs])
+        self.max_food_level = max([pair[1] for pair in agent_food_level_pairs])
         self.force_coop = force_coop
 
     def sample_food(self, key: chex.PRNGKey) -> chex.Array:
@@ -136,13 +137,13 @@ class RandomGenerator:
         # Stack x and y coordinates to form a 2D array
         return jnp.stack([agent_positions_x, agent_positions_y], axis=1)
 
-    def sample_levels(self, max_level: int, shape: chex.Shape, key: chex.PRNGKey) -> chex.Array:
+    def sample_levels(self, min_level:int, max_level: int, shape: chex.Shape, key: chex.PRNGKey) -> chex.Array:
         """Samples levels within specified bounds."""
-        return jax.random.randint(key, shape=shape, minval=1, maxval=max_level + 1)
+        return jax.random.randint(key, shape=shape, minval=min_level, maxval=max_level + 1)
 
     def __call__(self, key: chex.PRNGKey) -> State:
         """Generates a state containing grid, agent, and food item configurations."""
-        key_food, key_agents, key_food_level, key_agent_level, key = jax.random.split(key, 5)
+        key_food, key_agents, key_levels, key = jax.random.split(key, 4)
 
         # Generate positions for food items
         food_positions = self.sample_food(key_food)
@@ -154,17 +155,10 @@ class RandomGenerator:
         mask = mask.ravel()
         agent_positions = self.sample_agents(key=key_agents, mask=mask)
 
+        sampled_level_agent, sampled_level_food = jax.random.choice(key_levels, self.agent_food_level_pairs)
         # Generate levels for agents and food items
-        agent_levels = self.sample_levels(self.max_agent_level, (self.num_agents,), key_agent_level)
-        # In the worst case, 3 agents are needed to eat a food item
-        max_food_level = jnp.sum(jnp.sort(agent_levels)[:3])
-
-        # Determine food levels based on the maximum level of agents
-        food_levels = jnp.where(
-            self.force_coop,
-            jnp.full(shape=(self.num_food,), fill_value=max_food_level),
-            self.sample_levels(max_food_level, (self.num_food,), key_food_level),
-        )
+        agent_levels = jnp.full((self.num_agents,), sampled_level_agent)
+        food_levels = jnp.full((self.num_food,), sampled_level_food)
 
         # Create pytrees for agents and food items
         agents = jax.vmap(Agent)(

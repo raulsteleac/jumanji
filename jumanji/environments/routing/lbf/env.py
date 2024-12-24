@@ -31,6 +31,7 @@ from jumanji.environments.routing.lbf.types import Food, Observation, State
 from jumanji.environments.routing.lbf.viewer import LevelBasedForagingViewer
 from jumanji.types import TimeStep, restart, termination, transition, truncation
 from jumanji.viewer import Viewer
+from typing import List, Tuple
 
 
 class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observation]):
@@ -114,17 +115,25 @@ class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observatio
         self,
         generator: Optional[RandomGenerator] = None,
         viewer: Optional[Viewer[State]] = None,
-        time_limit: int = 100,
+        time_limit: int = 400,
         grid_observation: bool = False,
+        reward_one_for_harvest: bool = False,
         normalize_reward: bool = True,
         penalty: float = 0.0,
+        grid_size: int = 15,
+        fov: int = 2,
+        num_agents: int = 3,
+        num_food: int = 12,
+        enable_diagonal_adjancecy: bool = True,
+        agent_food_level_pairs: List[Tuple[int, int]] = [(1, 1)],
     ) -> None:
-        self._generator = generator or RandomGenerator(
-            grid_size=8,
-            fov=8,
-            num_agents=2,
-            num_food=2,
+        self._generator = RandomGenerator(
+            grid_size=grid_size,
+            fov=fov,
+            num_agents=num_agents,
+            num_food=num_food,
             force_coop=True,
+            agent_food_level_pairs=agent_food_level_pairs,
         )
         self.time_limit = time_limit
         self.grid_size: int = self._generator.grid_size
@@ -133,6 +142,8 @@ class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observatio
         self.fov = self._generator.fov
         self.normalize_reward = normalize_reward
         self.penalty = penalty
+        self.enable_diagonal_adjancecy = enable_diagonal_adjancecy
+        self.reward_one_for_harvest = reward_one_for_harvest
 
         self._observer: Union[VectorObserver, GridObserver]
         if not grid_observation:
@@ -201,10 +212,11 @@ class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observatio
 
         # Eat the food
         food_items, eaten_this_step, adj_loading_agents_levels = jax.vmap(
-            utils.eat_food, (None, 0)
-        )(moved_agents, state.food_items)
+            utils.eat_food, (None, 0, None)
+        )(moved_agents, state.food_items, self.enable_diagonal_adjancecy)
 
         reward = self.get_reward(food_items, adj_loading_agents_levels, eaten_this_step)
+        reward -= 0.01
 
         state = State(
             agents=moved_agents,
@@ -274,12 +286,15 @@ class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observatio
                 0,
             )
 
-            # Zero out all agents if food was not eaten and add penalty
-            reward = (adj_loading_agents_levels * eaten_this_step * food.level) - penalty
+            if not self.reward_one_for_harvest:
+                # Zero out all agents if food was not eaten and add penalty
+                reward = (adj_loading_agents_levels * eaten_this_step * food.level) - penalty
 
-            # jnp.nan_to_num: Used in the case where no agents are adjacent to the food
-            normalizer = sum_agents_levels * total_food_level
-            reward = jnp.where(self.normalize_reward, jnp.nan_to_num(reward / normalizer), reward)
+                # jnp.nan_to_num: Used in the case where no agents are adjacent to the food
+                normalizer = sum_agents_levels * total_food_level
+                reward = jnp.where(self.normalize_reward, jnp.nan_to_num(reward / normalizer), reward)
+            else:
+                reward = 1 * eaten_this_step
 
             return reward
 

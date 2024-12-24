@@ -116,6 +116,7 @@ class VectorObserver(LbfObserver):
 
     def __init__(self, fov: int, grid_size: int, num_agents: int, num_food: int) -> None:
         super().__init__(fov, grid_size, num_agents, num_food)
+        self.visualise_all_agents = True
 
     def transform_positions(self, agent: Agent, items: Entity) -> chex.Array:
         """
@@ -198,7 +199,7 @@ class VectorObserver(LbfObserver):
         #  Check which agents within in the fov of the current agent.
         visible_agents = jnp.all(
             jnp.abs(agent.position - state.agents.position) <= self.fov, axis=-1
-        )
+        ) if not self.visualise_all_agents else jnp.ones(self.num_agents, dtype=bool)
 
         # Check which food items are visible and are not eaten.
         visible_foods = (

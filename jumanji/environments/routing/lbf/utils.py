@@ -22,7 +22,7 @@ from jumanji.environments.routing.lbf.constants import LOAD, MOVES
 from jumanji.environments.routing.lbf.types import Agent, Entity, Food, State
 
 
-def are_entities_adjacent(entity_a: Entity, entity_b: Entity) -> chex.Array:
+def are_entities_adjacent(entity_a: Entity, entity_b: Entity, enable_diagonals: bool = False) -> chex.Array:
     """
     Check if two entities are adjacent in the grid.
 
@@ -34,7 +34,7 @@ def are_entities_adjacent(entity_a: Entity, entity_b: Entity) -> chex.Array:
         chex.Array: True if entities are adjacent, False otherwise.
     """
     distance = jnp.abs(entity_a.position - entity_b.position)
-    return jnp.sum(distance) == 1
+    return jnp.sum(distance) == 1 if not enable_diagonals else jnp.max(distance) <= 1
 
 
 def flag_duplicates(a: chex.Array) -> chex.Array:
@@ -158,7 +158,7 @@ def fix_collisions(moved_agents: Agent, original_agents: Agent) -> Agent:
     return agents
 
 
-def eat_food(agents: Agent, food: Food) -> Tuple[Food, chex.Array, chex.Array]:
+def eat_food(agents: Agent, food: Food, enable_diagonals: bool = False) -> Tuple[Food, chex.Array, chex.Array]:
     """Try to eat the provided food if possible.
 
     Args:
@@ -174,7 +174,7 @@ def eat_food(agents: Agent, food: Food) -> Tuple[Food, chex.Array, chex.Array]:
     def get_adjacent_levels(agent: Agent, food: Food) -> chex.Array:
         """Return the level of the agent if it is adjacent to the food, else 0."""
         return jax.lax.select(
-            are_entities_adjacent(agent, food) & agent.loading & ~food.eaten,
+            are_entities_adjacent(agent, food, enable_diagonals) & agent.loading & ~food.eaten,
             agent.level,
             0,
         )
