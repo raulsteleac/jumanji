@@ -25,8 +25,8 @@ from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from numpy.typing import NDArray
 
 import jumanji
-import jumanji.environments.routing.lbf.constants as constants
-from jumanji.environments.routing.lbf.types import Agent, Entity, Food, State
+import jumanji.environments.routing.lbf_empty.constants as constants
+from jumanji.environments.routing.lbf_empty.types import Agent, Entity, State
 from jumanji.tree_utils import tree_slice
 from jumanji.viewer import Viewer
 
@@ -34,7 +34,8 @@ from jumanji.viewer import Viewer
 class LevelBasedForagingViewer(Viewer):
     def __init__(
         self,
-        grid_size: int,
+        grid_sizeX: int,
+        grid_sizeY: int,
         name: str = "LevelBasedForaging",
         render_mode: str = "human",
     ) -> None:
@@ -45,7 +46,7 @@ class LevelBasedForagingViewer(Viewer):
             name: custom name for the Viewer. Defaults to `LevelBasedForaging`.
         """
         self._name = name
-        self.rows, self.cols = (grid_size, grid_size)
+        self.rows, self.cols = (grid_sizeX, grid_sizeY)
         self.grid_size = 30
 
         self.icon_size = self.grid_size * 5 / self.rows
@@ -163,7 +164,6 @@ class LevelBasedForagingViewer(Viewer):
 
     def _draw_state(self, ax: plt.Axes, state: State) -> None:
         self._draw_grid(ax)
-        self._draw_food(state.food_items, ax)
         self._draw_agents(state.agents, ax)
 
     def _draw_grid(self, ax: plt.Axes) -> None:
@@ -222,30 +222,6 @@ class LevelBasedForagingViewer(Viewer):
 
             # Add a rectangle (polygon) next to the agent with the agent's level
             self.draw_badge(agent.level, cell_center, ax)
-
-    def _draw_food(self, food_items: Food, ax: plt.Axes) -> None:
-        """Draw the food on the grid."""
-        num_food = len(food_items.level)
-
-        for i in range(num_food):
-            food = tree_slice(food_items, i)
-            if food.eaten:
-                continue
-
-            # Read the image file
-            img_path = pkg_resources.resource_filename(
-                "jumanji", "environments/routing/lbf/imgs/apple.png"
-            )
-            img = plt.imread(img_path)
-            cell_center = self._entity_position(food)
-            self.draw_badge(food.level, cell_center, ax)
-
-            # Create an OffsetImage and add it to the axis
-            imagebox = OffsetImage(img, zoom=self.icon_size / self.grid_size)
-            ab = AnnotationBbox(imagebox, (cell_center[0], cell_center[1]), frameon=False, zorder=0)
-            ax.add_artist(ab)
-
-            # Add a rectangle (polygon) next to the agent with the food's level
 
     def _entity_position(self, entity: Entity) -> Tuple[float, float]:
         """Return the position of an entity on the grid."""

@@ -21,19 +21,19 @@ import jax.numpy as jnp
 import matplotlib
 from numpy.typing import NDArray
 
-import jumanji.environments.routing.lbf.utils as utils
+import jumanji.environments.routing.lbf_empty.utils as utils
 from jumanji import specs
 from jumanji.env import Environment
-from jumanji.environments.routing.lbf.constants import MOVES
-from jumanji.environments.routing.lbf.generator import RandomGenerator
-from jumanji.environments.routing.lbf.observer import GridObserver, VectorObserver
-from jumanji.environments.routing.lbf.types import Food, Observation, State
-from jumanji.environments.routing.lbf.viewer import LevelBasedForagingViewer
+from jumanji.environments.routing.lbf_empty.constants import MOVES
+from jumanji.environments.routing.lbf_empty.generator import RandomGenerator
+from jumanji.environments.routing.lbf_empty.observer import GridObserver, VectorObserver
+from jumanji.environments.routing.lbf_empty.types import Observation, State
+from jumanji.environments.routing.lbf_empty.viewer import LevelBasedForagingViewer
 from jumanji.types import TimeStep, restart, termination, transition, truncation
 from jumanji.viewer import Viewer
 
 
-class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observation]):
+class LevelBasedForagingEmpty(Environment[State, specs.MultiDiscreteArray, Observation]):
     """
     An implementation of the Level-Based Foraging environment where agents need to
     cooperate to collect food and split the reward.
@@ -119,70 +119,82 @@ class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observatio
         reward_one_for_harvest: bool = False,
         normalize_reward: bool = True,
         penalty: float = 0.0,
-        grid_size: int = 15,
+        grid_sizeX: int = 15,
+        grid_sizeY: int = 15,
         fov: int = 2,
         num_agents: int = 3,
-        num_food: int = 12,
+        num_food: int = 0,
         enable_diagonal_adjancecy: bool = True,
         agent_food_level_pairs: List[Tuple[int, int]] = [(1, 1)],
         fix_agents_at_positions: Optional[List[Tuple[int, int]]] = None,
         fix_targets_at_positions: Optional[List[Tuple[int, int]]] = None,
         others_influence: bool = False,
     ) -> None:
-        fix_agents_at_positions = jnp.array(fix_agents_at_positions)
+        fix_agents_at_positions = jnp.array(
+            fix_agents_at_positions
+        )  # jnp.ones_like(jnp.array(fix_agents_at_positions)) * -1
         fix_targets_at_positions = jnp.array(fix_targets_at_positions)
         self._generator = RandomGenerator(
-            grid_size=grid_size,
+            grid_sizeX=grid_sizeX,
+            grid_sizeY=grid_sizeY,
             fov=fov,
             num_agents=num_agents,
-            num_food=num_food,
             force_coop=True,
             agent_food_level_pairs=agent_food_level_pairs,
             fix_agents_at_positions=fix_agents_at_positions,
-            fix_targets_at_positions=fix_targets_at_positions,
             others_influence=others_influence,
         )
         self.time_limit = time_limit
-        self.grid_size: int = self._generator.grid_size
+        self.grid_sizeX: int = self._generator.grid_sizeX
+        self.grid_sizeY: int = self._generator.grid_sizeY
         self.num_agents: int = self._generator.num_agents
-        self.num_food: int = self._generator.num_food
         self.fov = self._generator.fov
         self.normalize_reward = normalize_reward
         self.penalty = penalty
         self.enable_diagonal_adjancecy = enable_diagonal_adjancecy
         self.reward_one_for_harvest = reward_one_for_harvest
+
+        assert self.num_agents > 0, "Number of agents must be greater than 0."
+        assert self.grid_sizeX > 0, "Grid size X must be greater than 0."
+        assert self.grid_sizeY > 0, "Grid size Y must be greater than 0."
+        assert len(fix_agents_at_positions) == self.num_agents
         self.fix_agents_at_positions = fix_agents_at_positions
         self.fix_targets_at_positions = fix_targets_at_positions
         self.others_influence = others_influence
+        self.num_food = num_food
 
         self._observer: Union[VectorObserver, GridObserver]
         if not grid_observation:
             self._observer = VectorObserver(
                 fov=self.fov,
-                grid_size=self.grid_size,
+                grid_sizeX=self.grid_sizeX,
+                grid_sizeY=self.grid_sizeY,
                 num_agents=self.num_agents,
-                num_food=self.num_food,
+                num_food=0,
             )
         else:
             self._observer = GridObserver(
                 fov=self.fov,
-                grid_size=self.grid_size,
+                grid_sizeX=self.grid_sizeX,
+                grid_sizeY=self.grid_sizeY,
                 num_agents=self.num_agents,
-                num_food=self.num_food,
+                num_food=0,
             )
 
         super().__init__()
 
         # create viewer for rendering environment
-        self._viewer = viewer or LevelBasedForagingViewer(self.grid_size, "LevelBasedForaging")
+        self._viewer = viewer or LevelBasedForagingViewer(
+            self.grid_sizeX, self.grid_sizeY, "LevelBasedForaging"
+        )
 
     def __repr__(self) -> str:
         return (
             "LevelBasedForaging(\n"
-            + f"\t grid_width={self.grid_size},\n"
-            + f"\t grid_height={self.grid_size},\n"
+            + f"\t grid_width={self.grid_sizeX},\n"
+            + f"\t grid_height={self.grid_sizeY},\n"
             + f"\t num_agents={self.num_agents}, \n"
-            + f"\t num_food={self.num_food}, \n"
+            + f"\t num_food={0}, \n"
             + f"\t max_agent_level={self._generator.max_agent_level}\n"
             ")"
         )
@@ -219,27 +231,21 @@ class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observatio
         actions = jnp.where(self.fix_agents_at_positions[:, 0] != -1, 0, actions)
         # Move agents, fix collisions that may happen and set loading status.
         moved_agents = utils.update_agent_positions(
-            state.agents, actions, state.food_items, self.grid_size, self.others_influence
+            state.agents, actions, self.grid_sizeX, self.grid_sizeY, self.others_influence
         )
 
-        # Eat the food
-        food_items, eaten_this_step, adj_loading_agents_levels = jax.vmap(
-            utils.eat_food, (None, 0, None)
-        )(moved_agents, state.food_items, self.enable_diagonal_adjancecy)
-
-        reward = self.get_reward(food_items, adj_loading_agents_levels, eaten_this_step)
+        reward = 0
         reward -= 0.01
 
         state = State(
             agents=moved_agents,
-            food_items=food_items,
             step_count=state.step_count + 1,
             key=state.key,
         )
         observation = self._observer.state_to_observation(state)
 
         # First condition is truncation, second is termination.
-        terminate = False  # jnp.all(state.food_items.eaten)
+        terminate = False
         truncate = state.step_count >= self.time_limit
 
         timestep = jax.lax.switch(
@@ -262,64 +268,7 @@ class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observatio
         return state, timestep
 
     def _get_extra_info(self, state: State, timestep: TimeStep) -> Dict:
-        """Computes extras metrics to be returned within the timestep."""
-        n_eaten = state.food_items.eaten.sum() + timestep.extras.get("eaten_food", jnp.int32(0))
-        percent_eaten = (n_eaten / self.num_food) * 100
-        food_to_agent_level_ratio = state.food_items.level.mean() / state.agents.level.mean()
-        return {"percent_eaten": percent_eaten, "spread": food_to_agent_level_ratio}
-
-    def get_reward(
-        self,
-        food_items: Food,
-        adj_loading_agents_levels: chex.Array,
-        eaten_this_step: chex.Array,
-    ) -> chex.Array:
-        """Returns a reward for all agents given all food items.
-
-        Args:
-            food_items (Food): All the food items in the environment.
-            adj_loading_agents_levels (chex.Array): The level of all agents adjacent to all foods.
-            eaten_this_step (chex.Array): Whether the food was eaten or not (this step).
-        """
-
-        def get_reward_per_food(
-            food: Food,
-            adj_loading_agents_levels: chex.Array,
-            eaten_this_step: chex.Array,
-        ) -> chex.Array:
-            """Returns the reward for all agents given a single food."""
-
-            # If the food has already been eaten or is not loaded, the sum will be equal to 0
-            sum_agents_levels = jnp.sum(adj_loading_agents_levels)
-
-            # Penalize agents for not being able to cooperate and eat food
-            penalty = jnp.where(
-                (sum_agents_levels != 0) & (sum_agents_levels < food.level),
-                self.penalty,
-                0,
-            )
-
-            if not self.reward_one_for_harvest:
-                # Zero out all agents if food was not eaten and add penalty
-                reward = (adj_loading_agents_levels * eaten_this_step * food.level) - penalty
-
-                # jnp.nan_to_num: Used in the case where no agents are adjacent to the food
-                normalizer = sum_agents_levels * total_food_level
-                reward = jnp.where(
-                    self.normalize_reward, jnp.nan_to_num(reward / normalizer), reward
-                )
-            else:
-                reward = 1 * eaten_this_step
-
-            return reward
-
-        # Get reward per food for all food items,
-        # then sum it on the agent dimension to get reward per agent.
-        total_food_level = jnp.sum(food_items.level)
-        reward_per_food = jax.vmap(get_reward_per_food, in_axes=(0, 0, 0))(
-            food_items, adj_loading_agents_levels, eaten_this_step
-        )
-        return jnp.sum(reward_per_food, axis=0)
+        return {"percent_eaten": 0}
 
     def render(self, state: State) -> Optional[NDArray]:
         """Renders the current state of the `LevelBasedForaging` environment.

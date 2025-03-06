@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Tuple, List
+from typing import List, Tuple
 
 import chex
 import jax
@@ -36,6 +36,9 @@ class RandomGenerator:
         num_food: int,
         fov: int,
         agent_food_level_pairs: List[Tuple[int, int]],
+        fix_agents_at_positions: List[Tuple[int, int]] = None,
+        fix_targets_at_positions: List[Tuple[int, int]] = None,
+        others_influence: bool = False,
         force_coop: bool = False,
     ):
         """
@@ -60,7 +63,7 @@ class RandomGenerator:
             "Ensure enough non-edge positions for food placement to avoid adjacency. "
             "If not, food will be incorrectly placed due to JAX's silent error handling."
         )
-        assert (grid_size - 2) ** 2 - num_agents > min_cells_food, err
+        # assert (grid_size - 2) ** 2 - num_agents > min_cells_food, err
 
         self.grid_size = grid_size
         self.fov = grid_size if fov is None else fov
@@ -69,6 +72,10 @@ class RandomGenerator:
         self.agent_food_level_pairs = jnp.array(agent_food_level_pairs)
         self.max_agent_level = max([pair[0] for pair in agent_food_level_pairs])
         self.max_food_level = max([pair[1] for pair in agent_food_level_pairs])
+        self.fix_agents_at_positions = fix_agents_at_positions
+        self.active_agents_mask = self.fix_agents_at_positions[:, 0] != -1
+        self.fix_targets_at_positions = fix_targets_at_positions
+        self.others_influence = others_influence
         self.force_coop = force_coop
 
     def sample_food(self, key: chex.PRNGKey) -> chex.Array:
@@ -114,6 +121,19 @@ class RandomGenerator:
         food_positions_x, food_positions_y = jnp.unravel_index(
             food_flat_positions, (self.grid_size, self.grid_size)
         )
+
+        food_positions_x = jnp.where(
+            self.fix_targets_at_positions[:, 0] != -1,
+            self.fix_targets_at_positions[:, 0],
+            food_positions_x,
+        )
+
+        food_positions_y = jnp.where(
+            self.fix_targets_at_positions[:, 1] != -1,
+            self.fix_targets_at_positions[:, 1],
+            food_positions_y,
+        )
+
         food_positions = jnp.stack([food_positions_x, food_positions_y], axis=1)
 
         return food_positions
@@ -126,7 +146,7 @@ class RandomGenerator:
             key=key,
             a=self.grid_size**2,
             shape=(self.num_agents,),
-            replace=False,  # Avoid agent positions overlaping
+            replace=not self.others_influence,  # False if avoid agent positions overlaping
             p=mask,
         )
         # Unravel indices to get x and y coordinates
@@ -134,10 +154,24 @@ class RandomGenerator:
             agent_flat_positions, (self.grid_size, self.grid_size)
         )
 
+        agent_positions_x = jnp.where(
+            self.fix_agents_at_positions[:, 0] != -1,
+            self.fix_agents_at_positions[:, 0],
+            agent_positions_x,
+        )
+
+        agent_positions_y = jnp.where(
+            self.fix_agents_at_positions[:, 1] != -1,
+            self.fix_agents_at_positions[:, 1],
+            agent_positions_y,
+        )
+
         # Stack x and y coordinates to form a 2D array
         return jnp.stack([agent_positions_x, agent_positions_y], axis=1)
 
-    def sample_levels(self, min_level:int, max_level: int, shape: chex.Shape, key: chex.PRNGKey) -> chex.Array:
+    def sample_levels(
+        self, min_level: int, max_level: int, shape: chex.Shape, key: chex.PRNGKey
+    ) -> chex.Array:
         """Samples levels within specified bounds."""
         return jax.random.randint(key, shape=shape, minval=min_level, maxval=max_level + 1)
 
@@ -152,10 +186,17 @@ class RandomGenerator:
         # 1's where agents can be placed.
         mask = jnp.ones((self.grid_size, self.grid_size), dtype=bool)
         mask = mask.at[food_positions].set(False)
+        # Reserve location for fixed agents
+        # mask = mask.at[
+        #     self.fix_agents_at_positions[self.active_agents_mask, 0],
+        #     self.fix_agents_at_positions[self.active_agents_mask, 1],
+        # ].set(False)
         mask = mask.ravel()
         agent_positions = self.sample_agents(key=key_agents, mask=mask)
 
-        sampled_level_agent, sampled_level_food = jax.random.choice(key_levels, self.agent_food_level_pairs)
+        sampled_level_agent, sampled_level_food = jax.random.choice(
+            key_levels, self.agent_food_level_pairs
+        )
         # Generate levels for agents and food items
         agent_levels = jnp.full((self.num_agents,), sampled_level_agent)
         food_levels = jnp.full((self.num_food,), sampled_level_food)

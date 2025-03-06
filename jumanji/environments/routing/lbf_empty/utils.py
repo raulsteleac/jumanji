@@ -18,8 +18,8 @@ import chex
 import jax
 import jax.numpy as jnp
 
-from jumanji.environments.routing.lbf.constants import LOAD, MOVES
-from jumanji.environments.routing.lbf.types import Agent, Entity, Food, State
+from jumanji.environments.routing.lbf_empty.constants import LOAD, MOVES
+from jumanji.environments.routing.lbf_empty.types import Agent, Entity, State
 
 
 def are_entities_adjacent(
@@ -54,9 +54,9 @@ def flag_duplicates(a: chex.Array) -> chex.Array:
 def simulate_agent_movement(
     agent: Agent,
     action: chex.Array,
-    food_items: Food,
     agents: Agent,
-    grid_size: int,
+    grid_sizeX: int,
+    grid_sizeY: int,
     others_influence: bool = False,
 ) -> Agent:
     """
@@ -65,7 +65,6 @@ def simulate_agent_movement(
     Args:
         agent (Agent): The agent to move.
         action (chex.Array): The action to take.
-        food_items (Food): All food items in the grid.
         agents (Agent): All agents in the grid.
         grid_size (int): The size of the grid.
 
@@ -77,16 +76,17 @@ def simulate_agent_movement(
     new_position = agent.position + MOVES[action]
 
     # Check if the new position is out of bounds
-    out_of_bounds = jnp.any((new_position < 0) | (new_position >= grid_size))
+    out_of_bounds = (
+        jnp.any((new_position < 0))
+        | (new_position[0] >= grid_sizeX)
+        | (new_position[1] >= grid_sizeY)
+    )
 
     # Check if the new position is occupied by food or another agent
     agent_at_position = jnp.any(
         jnp.all(new_position == agents.position, axis=1) & (agent.id != agents.id)
     )
-    food_at_position = jnp.any(
-        jnp.all(new_position == food_items.position, axis=1) & ~food_items.eaten
-    )
-    entity_at_position = jnp.any(agent_at_position | food_at_position)
+    entity_at_position = jnp.any(agent_at_position)
 
     # Move the agent to the new position if it's a valid position,
     # otherwise keep the current position
@@ -103,8 +103,8 @@ def simulate_agent_movement(
 def update_agent_positions(
     agents: Agent,
     actions: chex.Array,
-    food_items: Food,
-    grid_size: int,
+    grid_sizeX: int,
+    grid_sizeY: int,
     others_influence: bool = False,
 ) -> Any:
     """
@@ -123,9 +123,9 @@ def update_agent_positions(
     moved_agents = jax.vmap(simulate_agent_movement, (0, 0, None, None, None, None))(
         agents,
         actions,
-        food_items,
         agents,
-        grid_size,
+        grid_sizeX,
+        grid_sizeY,
         others_influence,
     )
 
@@ -175,41 +175,6 @@ def fix_collisions(moved_agents: Agent, original_agents: Agent) -> Agent:
     return agents
 
 
-def eat_food(
-    agents: Agent, food: Food, enable_diagonals: bool = False
-) -> Tuple[Food, chex.Array, chex.Array]:
-    """Try to eat the provided food if possible.
-
-    Args:
-        agents(Agent): All agents in the grid.
-        food(Food): The food to attempt to eat.
-
-    Returns:
-        new_food (Food): Updated state of the food, indicating whether it was eaten.
-        food_eaten_this_step (chex.Array): Whether or not the food was eaten at this step.
-        agents_loading_levels (chex.Array): Adjacent agents' levels loading around the food.
-    """
-
-    def get_adjacent_levels(agent: Agent, food: Food) -> chex.Array:
-        """Return the level of the agent if it is adjacent to the food, else 0."""
-        return jax.lax.select(
-            are_entities_adjacent(agent, food, enable_diagonals) & agent.loading & ~food.eaten,
-            agent.level,
-            0,
-        )
-
-    # Get the level of all adjacent agents that are trying to load the food
-    adj_loading_agents_levels = jax.vmap(get_adjacent_levels, (0, None))(agents, food)
-
-    # If the food has already been eaten or is not loaded, the sum will be equal to 0
-    food_eaten_this_step = jnp.sum(adj_loading_agents_levels) >= food.level
-
-    # Set food to eaten if it was eaten.
-    new_food = food.replace(eaten=food_eaten_this_step | food.eaten)  # type: ignore
-
-    return new_food, food_eaten_this_step, adj_loading_agents_levels
-
-
 def compute_action_mask(agent: Agent, state: State, grid_size: int) -> chex.Array:
     """
     Calculate the action mask for a given agent based on the current state.
@@ -232,22 +197,9 @@ def compute_action_mask(agent: Agent, state: State, grid_size: int) -> chex.Arra
         next_positions, state.agents, (state.agents.id != agent.id)
     )
 
-    # Check if any food is in a next position (Food must be uneaten)
-    food_occupied = jax.vmap(check_pos_fn, (0, None, None))(
-        next_positions, state.food_items, ~state.food_items.eaten
-    )
     # Check if the next position is out of bounds
     out_of_bounds = jnp.any((next_positions < 0) | (next_positions >= grid_size), axis=-1)
 
-    action_mask = ~(food_occupied | agent_occupied | out_of_bounds)
-
-    # Check if the agent can load food (if placed in the neighborhood)
-    num_adj_food = (
-        jax.vmap(are_entities_adjacent, (0, None))(state.food_items, agent)
-        & ~state.food_items.eaten
-    )
-    is_food_adj = jnp.sum(num_adj_food) > 0
-
-    action_mask = jnp.where(is_food_adj, action_mask, action_mask.at[-1].set(False))
+    action_mask = ~(agent_occupied | out_of_bounds)
 
     return action_mask
