@@ -112,19 +112,27 @@ class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observatio
 
     def __init__(
         self,
-        generator: Optional[RandomGenerator] = None,
+        _: Optional[RandomGenerator] = None,
         viewer: Optional[Viewer[State]] = None,
         time_limit: int = 100,
         grid_observation: bool = False,
         normalize_reward: bool = True,
         penalty: float = 0.0,
+        grid_size: int = 15,
+        fov: int = 2,
+        num_agents: int = 3,
+        num_food: int = 12,
+        force_coop: bool = True,
+        enable_diagonal_adjacency: bool = True,
+        global_others_view: bool = True,
+        observe_others_observe_food: bool = False,
     ) -> None:
-        self._generator = generator or RandomGenerator(
-            grid_size=8,
-            fov=8,
-            num_agents=2,
-            num_food=2,
-            force_coop=True,
+        self._generator = RandomGenerator(
+            grid_size=grid_size,
+            fov=fov,
+            num_agents=num_agents,
+            num_food=num_food,
+            force_coop=force_coop,
         )
         self.time_limit = time_limit
         self.grid_size: int = self._generator.grid_size
@@ -133,6 +141,7 @@ class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observatio
         self.fov = self._generator.fov
         self.normalize_reward = normalize_reward
         self.penalty = penalty
+        self.enable_diagonal_adjacency = enable_diagonal_adjacency
 
         self._observer: Union[VectorObserver, GridObserver]
         if not grid_observation:
@@ -141,6 +150,8 @@ class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observatio
                 grid_size=self.grid_size,
                 num_agents=self.num_agents,
                 num_food=self.num_food,
+                global_others_view=global_others_view,
+                observe_others_observe_food=observe_others_observe_food,
             )
         else:
             self._observer = GridObserver(
@@ -201,8 +212,8 @@ class LevelBasedForaging(Environment[State, specs.MultiDiscreteArray, Observatio
 
         # Eat the food
         food_items, eaten_this_step, adj_loading_agents_levels = jax.vmap(
-            utils.eat_food, (None, 0)
-        )(moved_agents, state.food_items)
+            utils.eat_food, (None, 0, None)
+        )(moved_agents, state.food_items, self.enable_diagonal_adjacency)
 
         reward = self.get_reward(food_items, adj_loading_agents_levels, eaten_this_step)
 

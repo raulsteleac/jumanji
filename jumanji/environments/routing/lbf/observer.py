@@ -114,8 +114,18 @@ class VectorObserver(LbfObserver):
     - num_food (int): The number of food items in the environment.
     """
 
-    def __init__(self, fov: int, grid_size: int, num_agents: int, num_food: int) -> None:
+    def __init__(
+        self,
+        fov: int,
+        grid_size: int,
+        num_agents: int,
+        num_food: int,
+        global_others_view: bool,
+        observe_others_observe_food: bool,
+    ) -> None:
         super().__init__(fov, grid_size, num_agents, num_food)
+        self.global_others_view = global_others_view
+        self.observe_others_observe_food = observe_others_observe_food
 
     def transform_positions(self, agent: Agent, items: Entity) -> chex.Array:
         """
@@ -196,10 +206,11 @@ class VectorObserver(LbfObserver):
         Returns the observation for the given agent."""
 
         #  Check which agents within in the fov of the current agent.
-        visible_agents = jnp.all(
-            jnp.abs(agent.position - state.agents.position) <= self.fov, axis=-1
+        visible_agents = (
+            jnp.all(jnp.abs(agent.position - state.agents.position) <= self.fov, axis=-1)
+            if not self.global_others_view
+            else jnp.ones(self.num_agents, dtype=bool)
         )
-
         # Check which food items are visible and are not eaten.
         visible_foods = (
             jnp.all(
@@ -248,7 +259,7 @@ class VectorObserver(LbfObserver):
             agent_levels, indices_are_sorted=True, unique_indices=True
         )
 
-        return agent_view
+        return (agent_view, jnp.any(visible_foods))
 
     def state_to_observation(self, state: State) -> Observation:
         """
@@ -262,7 +273,12 @@ class VectorObserver(LbfObserver):
                          and step count for all agents.
         """
         # Create the agents' observation.
-        agents_view = jax.vmap(self.make_agents_view, (0, None))(state.agents, state)
+        agents_view, sees_food = jax.vmap(self.make_agents_view, (0, None))(state.agents, state)
+        if self.observe_others_observe_food:
+            sees_food = jnp.repeat(sees_food[jnp.newaxis, ...], self.num_agents, axis=0)
+            agents_view = jnp.concatenate(
+                [agents_view, sees_food], axis=1
+            )  # Concatenate the food visibility info.
 
         # Compute the action mask.
         action_mask = jax.vmap(utils.compute_action_mask, (0, None, None))(
@@ -290,8 +306,12 @@ class VectorObserver(LbfObserver):
             specs.Spec[Observation]: The observation spec for the environment.
         """
         max_ob = jnp.max(jnp.array([max_food_level, max_agent_level, self.grid_size]))
+        observe_others_observe_food_dim = self.num_agents if self.observe_others_observe_food else 0
         agents_view = specs.BoundedArray(
-            shape=(self.num_agents, 3 * (self.num_agents + self.num_food)),
+            shape=(
+                self.num_agents,
+                3 * (self.num_agents + self.num_food) + observe_others_observe_food_dim,
+            ),
             dtype=jnp.int32,
             name="agents_view",
             minimum=-1,

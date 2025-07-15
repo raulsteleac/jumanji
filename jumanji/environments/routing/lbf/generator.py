@@ -68,6 +68,7 @@ class RandomGenerator:
         self.num_agents = num_agents
         self.num_food = num_food
         self.max_agent_level = max_agent_level
+        self.max_food_level = num_food * max_agent_level
         self.force_coop = force_coop
 
     def sample_food(self, key: chex.PRNGKey) -> chex.Array:
@@ -156,8 +157,8 @@ class RandomGenerator:
 
         # Generate levels for agents and food items
         agent_levels = self.sample_levels(self.max_agent_level, (self.num_agents,), key_agent_level)
-        # In the worst case, 3 agents are needed to eat a food item
-        max_food_level = jnp.sum(jnp.sort(agent_levels)[:3])
+        # In the worst case, all agents are needed to eat a food item
+        max_food_level = jnp.sum(agent_levels)
 
         # Determine food levels based on the maximum level of agents
         food_levels = jnp.where(
